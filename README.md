@@ -20,6 +20,11 @@ Diese interaktive Streamlit-App visualisiert die Wahlergebnisse der Bundestagswa
 - [Pandas](https://pandas.pydata.org/)
 - [branca](https://python-visualization.github.io/branca/) für Farbskalen
 
+## 📚 Quellen
+
+- 🔗 Wahlwegebnisse, Screenshots und WFS: Zweckverband Kommunales Rechenzentrum Niederrhein (KRZN) - https://wahl.krzn.de/bw2025/wep310/navi/310-305-BW-STMM-1.html
+- 📎 GeoJSON-Daten: Eigene Aufbereitung auf Basis kommunaler Wahldaten
+
 ## 🚀 Online ausprobieren
 
 👉 **[Hier geht’s zur App](https://bundestagswahldinslaken.streamlit.app/)**
@@ -36,3 +41,4 @@ Diese interaktive Streamlit-App visualisiert die Wahlergebnisse der Bundestagswa
 │   └── best_result_2_ohneBW.csv
 ├── images/                  # Screenshots zur Visualisierung
 └── README.md
+
