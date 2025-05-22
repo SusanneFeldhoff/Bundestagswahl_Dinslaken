@@ -1,7 +1,6 @@
 streamlit
-streamlit-folium
 folium
+streamlit-folium
 geopandas
-shapely
 pandas
 branca

@@ -4,11 +4,10 @@ st.set_page_config(layout="wide")  # Muss ganz oben stehen
 import geopandas as gpd
 import folium
 from streamlit_folium import folium_static
-import base64
 from pathlib import Path
-from shapely.geometry import shape
 import pandas as pd
-from branca.colormap import linear, LinearColormap
+from branca.colormap import LinearColormap
+from folium.features import GeoJsonTooltip
 
 # === Farben definieren ===
 color_map = {
@@ -19,55 +18,12 @@ color_map = {
     "Die Linke": "#800080",
     "Team Toden": "#FFA500",
     "MLPD": "#00FFFF",
+    "BSW": "#9932CC",
+    "FDP": "#FFFF00"
 }
 
-# === Bild als base64 laden ===
-def image_to_base64(rel_path):
-    try:
-        base_path = Path(__file__).parent
-        full_path = base_path / rel_path
-        if not full_path.exists():
-            st.warning(f"❌ Bild nicht gefunden: {full_path}")
-            return None
-        with open(full_path, "rb") as f:
-            return base64.b64encode(f.read()).decode()
-    except Exception as e:
-        st.error(f"Fehler beim Laden von {rel_path}: {e}")
-        return None
-
-# === Popup HTML erzeugen (mit Scrollbar) ===
-# def popup_html(props):
-#     gemeinde = props.get("GEMEINDE", "n/a")
-#     bezirk = props.get("BEZIRKSNUMMER", "n/a")
-
-#     pfad_erst = props.get("Pfad_Erststimme", "")
-#     pfad_zweit = props.get("Pfad_Zweitstimme", "")
-
-#     img_erst = "<p>Kein Screenshot (Erststimme)</p>"
-#     img_zweit = "<p>Kein Screenshot (Zweitstimme)</p>"
-
-#     if pfad_erst:
-#         b64 = image_to_base64(pfad_erst)
-#         if b64:
-#             img_erst = f'<img src="data:image/png;base64,{b64}" width="600">'
-
-#     if pfad_zweit:
-#         b64 = image_to_base64(pfad_zweit)
-#         if b64:
-#             img_zweit = f'<img src="data:image/png;base64,{b64}" width="600">'
-
-#     return f"""
-#     <div style='width: 700px; height: 500px; overflow-y: auto;'>
-#         <b>Gemeinde:</b> {gemeinde} | <b>Bezirk:</b> {bezirk}<br><br>
-#         <b>Erststimme</b><br>{img_erst}<br><br>
-#         <b>Zweitstimme</b><br>{img_zweit}
-#     </div>
-#     """
-
-def popup_html(props):
-    gemeinde = props.get("GEMEINDE", "n/a")
-    bezirk = props.get("BEZIRKSNUMMER", "n/a")
-    return f"<b>Gemeinde:</b> {gemeinde} | <b>Bezirk:</b> {bezirk}"
+# Nur die Bundestagsparteien definieren
+bundestagsparteien = ["CDU", "SPD", "GRÜNE", "AfD", "Die Linke"]
 
 # === Daten laden ===
 @st.cache_data
@@ -84,95 +40,240 @@ gdf_merged = lade_geodaten()
 # === Header anzeigen ===
 st.markdown("""
     <h1 style='text-align: center; margin-bottom: 0;'>
-        Ergebnisse der Bundestagswahl 2025 für Dinslaken
+        Wahlergebnisse Dinslaken 2025
     </h1>
     <hr style='margin-top: 0;'>
+    <p style='text-align: center;'>🔗 Weitere Infos zu den Ergebnissen: <a href='https://wahl.krzn.de/bw2025/wep310/navi/310-305-BW-STMM-1.html' target='_blank'>wahl.krzn.de</a></p>
 """, unsafe_allow_html=True)
 
-# === Layout: Spaltenaufteilung ===
-col1, col2 = st.columns([1, 3])
+# === Layout mit zwei Spalten oben für Steuerung ===
+steuerung_col1, steuerung_col2 = st.columns([3, 2])
 
-with col1:
-    wahltyp = st.selectbox("Wähle den Typ der Stimme", ["Erststimme", "Zweitstimme"])
+with steuerung_col1:
     darstellung = st.radio("Darstellung", [
         "Siegerpartei pro Stimmbezirk",
-        "Bester Stimmbezirk pro Bundestagspartei",
-        "Komplettdarstellung pro Bundestagspartei"
+        "Bester Stimmbezirk pro Partei im Bundestag",
+        "Komplettdarstellung pro Partei im Bundestag",
+        "Wahlbeteiligung pro Stimmbezirk"
     ])
 
-    bundestagsparteien = ["CDU", "SPD", "GRÜNE", "AfD", "Die Linke"]
-    partei_auswahl = st.selectbox("Wähle eine Partei", bundestagsparteien) if darstellung == "Komplettdarstellung pro Bundestagspartei" else None
+with steuerung_col2:
+    partei_auswahl = st.selectbox("Wähle eine Partei", bundestagsparteien + ["BSW", "FDP"]) if darstellung == "Komplettdarstellung pro Partei im Bundestag" else None
 
-with col2:
-    m = folium.Map(location=[51.564, 6.733], zoom_start=12)
+# === Parallele Kartenansicht für Erst- und Zweitstimme ===
+col1, col2 = st.columns(2)
 
-    if darstellung == "Siegerpartei pro Stimmbezirk":
-        spalte = "SIEGERPARTEI_Erst" if wahltyp == "Erststimme" else "SIEGERPARTEI_Zweit"
-        for _, row in gdf_merged.iterrows():
-            partei = row.get(spalte, "")
-            farbe = color_map.get(partei, "#CCCCCC")
-            popup = folium.Popup(popup_html(row), max_width=750)
+# === Siegerpartei pro Stimmbezirk ===
+if darstellung == "Siegerpartei pro Stimmbezirk":
+    partei_tooltip_felder = [
+        "SPD_{} %", "CDU_{} %", "GRÜNE_{} %", "AfD_{} %", "Die Linke_{} %", "FDP_{} %", "BSW_{} %"
+    ]
+    for stimme, col in zip(["Erststimme", "Zweitstimme"], [col1, col2]):
+        stimme_nr = "1" if stimme == "Erststimme" else "2"
+        spalte = f"SIEGERPARTEI_{'Erst' if stimme == 'Erststimme' else 'Zweit'}"
+        tooltip_fields = [feld.format(stimme_nr) for feld in partei_tooltip_felder if feld.format(stimme_nr) in gdf_merged.columns]
+        aliases = [f"{feld.split('_')[0]} (%):" for feld in tooltip_fields]
+
+        with col:
+            st.subheader(stimme)
+            m = folium.Map(location=[51.564, 6.733], zoom_start=12)
+
+            def style_function_factory(spaltenname):
+                def style_function(feature):
+                    partei = feature["properties"].get(spaltenname, "")
+                    return {
+                        "fillColor": color_map.get(partei, "#CCCCCC"),
+                        "color": "black",
+                        "weight": 1,
+                        "fillOpacity": 0.7
+                    }
+                return style_function
 
             folium.GeoJson(
-                row["geometry"].__geo_interface__,
-                style_function=lambda feature, farbe=farbe: {
-                    "fillColor": farbe,
-                    "color": "black",
-                    "weight": 1,
-                    "fillOpacity": 0.7
-                },
-                tooltip=f"Bezirk {row['BEZIRKSNUMMER']} — {partei}"
-            ).add_child(popup).add_to(m)
-
-    elif darstellung == "Bester Stimmbezirk pro Bundestagspartei":
-        result_df = lade_ergebnisse(wahltyp)
-
-        folium.GeoJson(
-            data=gdf_merged,
-            style_function=lambda feature: {
-                "fillColor": "#eeeeee",
-                "color": "#999999",
-                "weight": 1,
-                "fillOpacity": 0.2
-            }
-        ).add_to(m)
-
-        for partei in bundestagsparteien:
-            df_p = result_df[result_df["Partei"] == partei]
-            if df_p.empty:
-                continue
-            best_row = df_p.sort_values("Ergebnis", ascending=False).iloc[0]
-            bezirk = best_row["BEZIRKSNUMMER"]
-            stimmen = best_row["Ergebnis"]
-            farbe = color_map.get(partei, "#CCCCCC")
-            bezirk_data = gdf_merged[gdf_merged["BEZIRKSNUMMER"] == bezirk]
-            if bezirk_data.empty:
-                continue
-
-            geom = bezirk_data.iloc[0].geometry
-            folium.GeoJson(
-                geom.__geo_interface__,
-                style_function=lambda feature, farbe=farbe: {
-                    "fillColor": farbe,
-                    "color": "black",
-                    "weight": 2,
-                    "fillOpacity": 0.8
-                },
-                tooltip=f"{partei}: {stimmen:.1f}%"
+                data=gdf_merged.__geo_interface__,
+                style_function=style_function_factory(spalte),
+                tooltip=GeoJsonTooltip(
+                    fields=["BEZIRKSNUMMER"] + tooltip_fields,
+                    aliases=["Bezirk:"] + aliases,
+                    localize=True
+                )
             ).add_to(m)
 
-    elif darstellung == "Komplettdarstellung pro Bundestagspartei" and partei_auswahl:
-        spaltenname = f"{partei_auswahl}_{'1' if wahltyp == 'Erststimme' else '2'} %"
-        if spaltenname not in gdf_merged.columns:
-            st.error(f"Spalte {spaltenname} nicht gefunden.")
-        else:
-            farbskalen = {
-                "SPD": "YlOrRd",
-                "GRÜNE": "Greens",
-                "AfD": "Blues",
-                "Die Linke": "PuRd",
-            }
+            folium_static(m, width=600, height=500)
 
+# Nur Bundestagsparteien berücksichtigen bei bester Stimmbezirk pro Partei
+elif darstellung == "Bester Stimmbezirk pro Partei im Bundestag":
+    parteien_liste = bundestagsparteien
+    for stimme, col in zip(["Erststimme", "Zweitstimme"], [col1, col2]):
+        result_df = lade_ergebnisse(stimme)
+        with col:
+            st.subheader(stimme)
+            m = folium.Map(location=[51.564, 6.733], zoom_start=12)
+            folium.GeoJson(
+                data=gdf_merged,
+                style_function=lambda feature: {
+                    "fillColor": "#eeeeee",
+                    "color": "#999999",
+                    "weight": 1,
+                    "fillOpacity": 0.2
+                }
+            ).add_to(m)
+
+            best_bezirke = set()
+            for partei in parteien_liste:
+                df_p = result_df[result_df["Partei"] == partei]
+                if df_p.empty:
+                    continue
+                best_row = df_p.sort_values("Ergebnis", ascending=False).iloc[0]
+                bezirk = best_row["BEZIRKSNUMMER"]
+                if bezirk in best_bezirke:
+                    continue  # Vermeide doppelte Darstellung bei gleichem Bezirk
+                best_bezirke.add(bezirk)
+                stimmen = best_row["Ergebnis"]
+                farbe = color_map.get(partei, "#CCCCCC")
+                bezirk_data = gdf_merged[gdf_merged["BEZIRKSNUMMER"] == bezirk]
+                if bezirk_data.empty:
+                    continue
+                geom = bezirk_data.iloc[0].geometry
+                folium.GeoJson(
+                    geom.__geo_interface__,
+                    style_function=lambda feature, farbe=farbe: {
+                        "fillColor": farbe,
+                        "color": "black",
+                        "weight": 2,
+                        "fillOpacity": 0.8
+                    },
+                    tooltip=f"{partei}: {stimmen:.1f}%"
+                ).add_to(m)
+            folium_static(m, width=600, height=500)
+
+else:
+    parteien_liste = list(color_map.keys())
+
+if darstellung == "Wahlbeteiligung pro Stimmbezirk":
+    for stimme, col in zip(["Erststimme", "Zweitstimme"], [col1, col2]):
+        spaltenname = f"Wahlbeteiligung_{'1' if stimme == 'Erststimme' else '2'} %"
+        with col:
+            st.subheader(f"{stimme} – Wahlbeteiligung")
+            m = folium.Map(location=[51.564, 6.733], zoom_start=12)
+            colormap = LinearColormap(
+                colors=["#ffffcc", "#a1dab4", "#41b6c4", "#2c7fb8", "#253494"],
+                vmin=gdf_merged[spaltenname].min(),
+                vmax=gdf_merged[spaltenname].max()
+            )
+
+            def style_function(feature):
+                wert = feature["properties"].get(spaltenname, 0)
+                return {
+                    "fillColor": colormap(wert),
+                    "color": "black",
+                    "weight": 0.5,
+                    "fillOpacity": 0.7
+                }
+
+            folium.GeoJson(
+                data=gdf_merged.__geo_interface__,
+                style_function=style_function,
+                tooltip=GeoJsonTooltip(
+                    fields=["BEZIRKSNUMMER", spaltenname],
+                    aliases=["Bezirk:", "Wahlbeteiligung (%):"]
+                )
+            ).add_to(m)
+
+            colormap.caption = "Wahlbeteiligung (%)"
+            colormap.add_to(m)
+
+            folium_static(m, width=600, height=500)
+
+# elif darstellung == "Bester Stimmbezirk pro Partei im Bundestag":
+#     parteien_liste = bundestagsparteien
+#     for stimme, col in zip(["Erststimme", "Zweitstimme"], [col1, col2]):
+#         result_df = lade_ergebnisse(stimme)
+#         with col:
+#             st.subheader(stimme)
+#             m = folium.Map(location=[51.564, 6.733], zoom_start=12)
+#             folium.GeoJson(
+#                 data=gdf_merged,
+#                 style_function=lambda feature: {
+#                     "fillColor": "#eeeeee",
+#                     "color": "#999999",
+#                     "weight": 1,
+#                     "fillOpacity": 0.2
+#                 }
+#             ).add_to(m)
+
+#             for partei in parteien_liste:
+#                 df_p = result_df[result_df["Partei"] == partei]
+#                 if df_p.empty:
+#                     continue
+#                 best_row = df_p.sort_values("Ergebnis", ascending=False).iloc[0]
+#                 bezirk = best_row["BEZIRKSNUMMER"]
+#                 stimmen = best_row["Ergebnis"]
+#                 farbe = color_map.get(partei, "#CCCCCC")
+#                 bezirk_data = gdf_merged[gdf_merged["BEZIRKSNUMMER"] == bezirk]
+#                 if bezirk_data.empty:
+#                     continue
+#                 geom = bezirk_data.iloc[0].geometry
+#                 folium.GeoJson(
+#                     geom.__geo_interface__,
+#                     style_function=lambda feature, farbe=farbe: {
+#                         "fillColor": farbe,
+#                         "color": "black",
+#                         "weight": 2,
+#                         "fillOpacity": 0.8
+#                     },
+#                     tooltip=f"{partei}: {stimmen:.1f}%"
+#                 ).add_to(m)
+#             folium_static(m, width=600, height=500)
+# else:
+#     parteien_liste = list(color_map.keys())
+
+
+# elif darstellung == "Bester Stimmbezirk pro Partei im Bundestag":
+#     for stimme, col in zip(["Erststimme", "Zweitstimme"], [col1, col2]):
+#         result_df = lade_ergebnisse(stimme)
+#         with col:
+#             st.subheader(stimme)
+#             m = folium.Map(location=[51.564, 6.733], zoom_start=12)
+#             folium.GeoJson(
+#                 data=gdf_merged,
+#                 style_function=lambda feature: {
+#                     "fillColor": "#eeeeee",
+#                     "color": "#999999",
+#                     "weight": 1,
+#                     "fillOpacity": 0.2
+#                 }
+#             ).add_to(m)
+#             for partei in bundestagsparteien:
+#                 df_p = result_df[result_df["Partei"] == partei]
+#                 if df_p.empty:
+#                     continue
+#                 best_row = df_p.sort_values("Ergebnis", ascending=False).iloc[0]
+#                 bezirk = best_row["BEZIRKSNUMMER"]
+#                 stimmen = best_row["Ergebnis"]
+#                 farbe = color_map.get(partei, "#CCCCCC")
+#                 bezirk_data = gdf_merged[gdf_merged["BEZIRKSNUMMER"] == bezirk]
+#                 if bezirk_data.empty:
+#                     continue
+#                 geom = bezirk_data.iloc[0].geometry
+#                 folium.GeoJson(
+#                     geom.__geo_interface__,
+#                     style_function=lambda feature, farbe=farbe: {
+#                         "fillColor": farbe,
+#                         "color": "black",
+#                         "weight": 2,
+#                         "fillOpacity": 0.8
+#                     },
+#                     tooltip=f"{partei}: {stimmen:.1f}%"
+#                 ).add_to(m)
+#             folium_static(m, width=600, height=500)
+
+elif darstellung == "Komplettdarstellung pro Partei im Bundestag" and partei_auswahl:
+    for stimme, col in zip(["Erststimme", "Zweitstimme"], [col1, col2]):
+        spaltenname = f"{partei_auswahl}_{'1' if stimme == 'Erststimme' else '2'} %"
+        with col:
+            st.subheader(f"{stimme} – {partei_auswahl}")
+            m = folium.Map(location=[51.564, 6.733], zoom_start=12)
             if partei_auswahl == "CDU":
                 colormap = LinearColormap(
                     colors=["#aaaaaa", "#555555", "#000000"],
@@ -191,18 +292,24 @@ with col2:
 
                 folium.GeoJson(
                     data=gdf_merged.__geo_interface__,
-                    name="CDU",
+                    name=partei_auswahl,
                     style_function=style_function,
-                    tooltip=folium.GeoJsonTooltip(
+                    tooltip=GeoJsonTooltip(
                         fields=["BEZIRKSNUMMER", spaltenname],
                         aliases=["Bezirk:", f"{partei_auswahl} (%):"]
                     )
                 ).add_to(m)
-
                 colormap.caption = f"{partei_auswahl}-Stimmenanteil (%)"
                 colormap.add_to(m)
-
             else:
+                farbskalen = {
+                    "SPD": "YlOrRd",
+                    "GRÜNE": "Greens",
+                    "AfD": "Blues",
+                    "Die Linke": "PuRd",
+                    "FDP": "YlGnBu",
+                    "BSW": "BuPu"
+                }
                 folium.Choropleth(
                     geo_data=gdf_merged,
                     data=gdf_merged,
@@ -216,14 +323,12 @@ with col2:
 
                 folium.GeoJson(
                     data=gdf_merged.__geo_interface__,
-                    tooltip=folium.GeoJsonTooltip(
+                    tooltip=GeoJsonTooltip(
                         fields=["BEZIRKSNUMMER", spaltenname],
                         aliases=["Bezirk:", f"{partei_auswahl} (%):"]
                     )
                 ).add_to(m)
+            folium_static(m, width=600, height=500)
 
-    folium.LayerControl().add_to(m)
-    folium_static(m, width=1150, height=700)
-
-
-
+else:
+    st.info("Diese Ansicht ist nur für die Darstellung der Wahlbeteiligung aktiv.")
