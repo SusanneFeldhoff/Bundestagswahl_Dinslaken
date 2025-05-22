@@ -36,33 +36,38 @@ def image_to_base64(rel_path):
         return None
 
 # === Popup HTML erzeugen (mit Scrollbar) ===
+# def popup_html(props):
+#     gemeinde = props.get("GEMEINDE", "n/a")
+#     bezirk = props.get("BEZIRKSNUMMER", "n/a")
+
+#     pfad_erst = props.get("Pfad_Erststimme", "")
+#     pfad_zweit = props.get("Pfad_Zweitstimme", "")
+
+#     img_erst = "<p>Kein Screenshot (Erststimme)</p>"
+#     img_zweit = "<p>Kein Screenshot (Zweitstimme)</p>"
+
+#     if pfad_erst:
+#         b64 = image_to_base64(pfad_erst)
+#         if b64:
+#             img_erst = f'<img src="data:image/png;base64,{b64}" width="600">'
+
+#     if pfad_zweit:
+#         b64 = image_to_base64(pfad_zweit)
+#         if b64:
+#             img_zweit = f'<img src="data:image/png;base64,{b64}" width="600">'
+
+#     return f"""
+#     <div style='width: 700px; height: 500px; overflow-y: auto;'>
+#         <b>Gemeinde:</b> {gemeinde} | <b>Bezirk:</b> {bezirk}<br><br>
+#         <b>Erststimme</b><br>{img_erst}<br><br>
+#         <b>Zweitstimme</b><br>{img_zweit}
+#     </div>
+#     """
+
 def popup_html(props):
     gemeinde = props.get("GEMEINDE", "n/a")
     bezirk = props.get("BEZIRKSNUMMER", "n/a")
-
-    pfad_erst = props.get("Pfad_Erststimme", "")
-    pfad_zweit = props.get("Pfad_Zweitstimme", "")
-
-    img_erst = "<p>Kein Screenshot (Erststimme)</p>"
-    img_zweit = "<p>Kein Screenshot (Zweitstimme)</p>"
-
-    if pfad_erst:
-        b64 = image_to_base64(pfad_erst)
-        if b64:
-            img_erst = f'<img src="data:image/png;base64,{b64}" width="600">'
-
-    if pfad_zweit:
-        b64 = image_to_base64(pfad_zweit)
-        if b64:
-            img_zweit = f'<img src="data:image/png;base64,{b64}" width="600">'
-
-    return f"""
-    <div style='width: 700px; height: 500px; overflow-y: auto;'>
-        <b>Gemeinde:</b> {gemeinde} | <b>Bezirk:</b> {bezirk}<br><br>
-        <b>Erststimme</b><br>{img_erst}<br><br>
-        <b>Zweitstimme</b><br>{img_zweit}
-    </div>
-    """
+    return f"<b>Gemeinde:</b> {gemeinde} | <b>Bezirk:</b> {bezirk}"
 
 # === Daten laden ===
 @st.cache_data
